@@ -8,11 +8,11 @@
 
 ```
 src/
-├── ifn.js           函数切面：before / unshift / after / pipe / around / wrapper / filter / times
+├── aop.js           函数切面：before / unshift / after / pipe / around / wrapper / filter / times
 ├── chain.js         职责链（中间件链、洋葱模型）
 ├── co.js            并发控制队列
 ├── throttle.js      throttle / debounce
-├── index.js         统一出口（当前只导出 co / filter / intercept / throttle）
+├── index.js         统一出口：aop / chain(Chain) / co / throttle / filter / intercept
 └── *.example.js     每个模块对应的可运行示例
     *.test.js        每个模块对应的单元测试（Node 内置 test runner）
 ```
@@ -29,23 +29,34 @@ npm i https://github.com/imsasa/ifn.git
 
 ```javascript
 // 1. 函数式：不污染原型，推荐在公共代码中使用
-import {before, filter, times} from 'iaop/src/ifn.js';
+import {before, filter, times} from 'ifn/src/aop.js';
 const wrapped = before(fn, b4fn);
 
 // 2. 原型式：import 模块即挂载 Function.prototype，之后可直接链式调用
-import 'iaop/src/ifn.js';
+import 'ifn/src/aop.js';
 const wrapped = fn.before(b4fn).after(afn);
 ```
 
-> `ifn.js`、`co.js` 在首次 import 时会向 `Function.prototype` 挂载方法，这是本库的既有设计。
-> `intercept.js` / `filter.js` 与 `ifn.js` 挂载了**同名**原型方法，同时引入会互相覆盖 —— 请统一只使用 `ifn.js`。
-> `index.js` 目前未导出 `ifn.js` 与 `chain.js`，这两个模块请按路径直接引入。
+也可以从统一出口引入全部模块：
+
+```javascript
+import {aop, Chain, co, throttle, filter, intercept} from 'ifn/src/index.js';
+
+const wrapped = aop.before(fn, b4fn);
+const node    = new Chain(next => (arg) => next(arg));
+```
+
+> `aop.js`、`co.js` 在首次 import 时会向 `Function.prototype` 挂载方法，这是本库的既有设计。
+> `intercept.js` / `filter.js` 与 `aop.js` 挂载了**同名**原型方法（before / unshift / after / pipe / around / wrapper / filter），
+> 同时引入会互相覆盖 —— `index.js` 已按「历史模块先引入、`aop.js` 最后引入」的顺序保证最终生效的是 `aop.js` 的实现；
+> 单独使用时请统一只引入 `aop.js`。
+> `filter` 请使用函数式写法（`aop.filter(fn, filterFn)` 或 `filter(fn, filterFn)`）：`Function.prototype.filter` 存在同名参数遮蔽。
 
 ---
 
-## 一、ifn.js —— 函数切面
+## 一、aop.js —— 函数切面
 
-`ifn.js` 面向**单个函数**做装饰：在不改动原函数的前提下，往它的前后插入逻辑。
+`aop.js` 面向**单个函数**做装饰：在不改动原函数的前提下，往它的前后插入逻辑。
 
 | API | 说明 | 包装后的返回值 |
 | --- | --- | --- |
@@ -63,7 +74,7 @@ const wrapped = fn.before(b4fn).after(afn);
 ### before —— 前置通知
 
 ```javascript
-import {before} from 'iaop/src/ifn.js';
+import {before} from 'ifn/src/aop.js';
 
 const add = (a, b) => a + b;
 const fn  = before(add, (a, b) => console.log('计算', a, b));
@@ -173,7 +184,7 @@ const enhanced = add
 `Chain` 把**多个节点**串成一条可短路、可回流的管道（洋葱模型），适合权限校验、请求中间件这类场景。
 
 ```javascript
-import {Chain} from 'iaop/src/chain.js';
+import {Chain} from 'ifn/src/chain.js';
 
 const checkLogin = new Chain(next => async (arg) => {
     arg.log.push('checkLogin');
@@ -215,7 +226,7 @@ await checkLogin.run(arg);
 `co` 把对某个函数的**多次调用**排队调度，控制消费速度。每次调用返回 Promise，resolve 出 fn 的结果。
 
 ```javascript
-import {co} from 'iaop/src/co.js';
+import {co} from 'ifn/src/co.js';
 
 const coer = co((row) => duiZhang(row), 8, 800);
 await Promise.all(rows.map((row) => coer(row)));
@@ -238,7 +249,7 @@ const coer2 = save.co(4, 500);
 ## 四、throttle.js —— 节流与防抖
 
 ```javascript
-import {throttle, debounce} from 'iaop/src/throttle.js';
+import {throttle, debounce} from 'ifn/src/throttle.js';
 
 // 节流：默认 immediate=true，首次立即执行，窗口末尾再补一次（用最后一次的参数）
 const search = throttle((kw) => request(kw), 200);
