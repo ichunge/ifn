@@ -1,15 +1,52 @@
-//让函数并发执行
 /**
- * 创建一个具有并发控制和等待时间选项的函数
- * @export
- * @param {function} func - 要协作执行的函数
- * @param {number} [concurrency=1] - 允许的最大并发执行数
- * @param {number} [wt=0] - 每次函数执行后的等待时间（以毫秒为单位）
- * @return {function} - 返回一个新的函数，该函数接受原始函数的参数并返回一个promise
+ * co —— 并发控制队列
+ *
+ * 与 aop.js 的分工：aop.js 是给「单个函数」套切面（before / after / around ...），
+ * co 是把对某个函数的「多次调用」排队调度，控制同时运行的个数，两者是不同的关注点。
+ *
+ * 每个 API 都有两种等价写法：
+ *   1. 函数式：import {co} from "@asset/ifn/co.js"; co(fn, concurrency, wt)
+ *   2. 原型式：import "@asset/ifn/co.js"; fn.co(concurrency, wt)   // 挂载 Function.prototype 后才能用
+ *
+ * @example 批量操作：8 并发、800ms 间隔
+ *   import {co} from "@asset/ifn/co.js";
+ *   const coer = co((row) => duiZhang(row), 8, 800);
+ *   await Promise.all(rows.map((row) => coer(row)));
+ *
+ * 完整可运行示例见同目录下的 co.example.js：
+ *     node views/@asset/ifn/co.example.js
  */
-export function co(func, concurrency=1, wt = 0) {
-    let queue   = [];
-    let canceled, workers = new Set();
+
+/**
+ * 并发控制：把对 func 的高频调用排队执行，最多同时运行 concurrency 个，
+ * 每 wt 毫秒从队列取一个任务；每次调用返回 Promise，resolve 出 func 的结果。
+ * 调用返回的 fn 上挂有 stop() —— 清空队列并停止调度。
+ *
+ * @param func {function} 被限流的函数
+ * @param concurrency {number} 并发数，默认 1
+ * @param wt {number} 取任务的间隔毫秒，默认 10
+ * @return {function(...[*]): Promise<*>}
+ *
+ * @example 批量操作：8 并发、800ms 间隔
+ * const coer = co((row) => duiZhang(row), 8, 800);
+ * await Promise.all(rows.map((row) => coer(row)));
+ *
+ * @example 中断剩余任务
+ * const coer = co(save, 2, 100);
+ * rows.forEach((row) => coer(row));
+ * await coer.stop(); // 队列清空，未执行的不再执行
+ *
+ * @example 原型式
+ * const coer = save.co(4, 500);
+ *
+ * @see 项目用法见 views/rap/duizhang/merchant/data/list.vue、views/rap/individual/mac3.0/abnormal/@module/data-list.vue
+ */
+// 让函数并发执行
+export function co(func, concurrency = 1, wt = 10) {
+    const queue = [];
+    let canceled;
+    let workers = 0;
+
     function finish() {
         if (!canceled && fn.complete) {
             fn.complete();
@@ -17,56 +54,48 @@ export function co(func, concurrency=1, wt = 0) {
         fn.finish && fn.finish(canceled);
         canceled = undefined;
     }
-    /**
-     * 从队列中取出任务并执行它们，直到队列为空
-     *
-     * @param {Array} queue - 任务队列
-     * @param {function} func - 要执行的函数
-     */
-    async function exec(queue,func) {
-        while (queue.length > 0) {
-            const {args, resolve, reject} = queue.shift();
-            let ret = canceled?undefined:await func(...args);
-            resolve(ret);
-            if(wt&&!canceled){
-                await new Promise(res =>setTimeout(res, wt));
+
+    async function exec(queue, func) {
+        let $resolve, todo = 0;
+        const p            = new Promise(($res) => $resolve = $res);
+        const fn           = async () => {
+            if (queue.length < 1 || canceled) return;
+            todo++;
+            const {args, resolve} = queue.shift();
+            Promise.resolve(func(...args)).then((ret) => resolve(ret)).then(() => todo--);
+        };
+        const timer        = setInterval(() => fn().then(stop), wt);
+        // 清除定时并结束任务
+        const stop         = () => {
+            if (todo) return;
+            if (queue.length < 1 || canceled) {
+                $resolve();
+                clearInterval(timer);
             }
-        }
+        };
+        fn().then(stop);
+        return p;
     }
-    /**
-     * 包装的函数，将参数放入队列并根据并发限制启动新的工作程序
-     *
-     * @param {...any} args - 传递给原函数的参数
-     * @return {Promise} - 一个promise，它将在原函数的结果上解析
-     */
+
     function fn(...args) {
+        if (canceled) return; // todo 抛出错误
         return new Promise(async (resolve, reject) => {
             queue.push({args, resolve, reject});
-            if (workers.size >= concurrency) return;
-            let worker=exec(queue,func).then(() =>workers.delete(worker)).finally(()=>workers.size===0&&finish());
-            workers.add(worker);
+            if (workers >= concurrency) return;
+            workers++;
+            setTimeout(() => exec(queue, func).then(() => workers--).finally(() => workers === 0 && finish()));
         });
     }
-    /**
-     * 停止所有当前的和未来的执行
-     */
+
     fn.stop = () => {
-        if (queue.length) {
-            canceled = true;
-            fn.break && fn.break();
-        }
-    }
+        queue.length = [];
+        canceled     = true;
+        fn.break && fn.break();
+        return new Promise((res, rej) => setInterval(() => workers || res(), 100));
+    };
     return fn;
 }
 
-/**
- * 为Function原型添加一个新的方法，允许使用co函数轻松包装任何函数
- *
- * @param {number} [concurrency=1] - 允许的最大并发执行数
- * @param {number} [waitTime=0] - 每次函数执行后的等待时间（以毫秒为单位）
- * @return {function} - 返回一个新的函数，该函数接受原始函数的参数并返回一个promise
- */
 Function.prototype.co = function (concurrency, waitTime = 0) {
     return co(this, concurrency, waitTime);
-}
-export default co;
+};

@@ -1,12 +1,12 @@
 {
-  "name": "iaop",
+  "name": "ifn",
   "version": "2.0.5",
   "description": "将函数进行aop封装的库",
   "main": "./src/index.js",
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/imsasa/iaop.git"
+    "url": "git+https://github.com/ichunge/ifn.git"
   },
   "scripts": {
     "clean": "rimraf dist",
